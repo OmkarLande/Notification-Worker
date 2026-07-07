@@ -6,63 +6,44 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
+
+	"github.com/OmkarLande/notification-worker/internal/app"
+	"github.com/OmkarLande/notification-worker/internal/config"
 )
 
 func main() {
-	log.Println("🚀 Starting Notification Worker...")
-
-	// Load environment variables
+	// Load .env file if present. Non-fatal — production environments inject
+	// variables directly and will not have a .env file.
 	if err := godotenv.Load(); err != nil {
-		log.Println("ℹ️ Note: No .env file found or loaded, falling back to system environment variables")
+		log.Println("No .env file found; falling back to system environment variables")
 	}
 
-	appEnv := os.Getenv("APP_ENV")
-	port := os.Getenv("PORT")
-	dbURL := os.Getenv("DB_URL")
-	redisURL := os.Getenv("REDIS_URL")
-
-	log.Printf("🌍 Environment: %s", appEnv)
-	log.Printf("🔌 Port: %s", port)
-
-	// Database Connection Test
-	if dbURL == "" {
-		log.Println("⚠️ Warning: DB_URL is not configured")
-	} else {
-		log.Println("🔑 Connecting to PostgreSQL database...")
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		
-		dbpool, err := pgxpool.New(ctx, dbURL)
-		if err != nil {
-			log.Printf("❌ Failed to create database pool: %v", err)
-		} else {
-			defer dbpool.Close()
-			if err := dbpool.Ping(ctx); err != nil {
-				log.Printf("❌ Database ping failed: %v", err)
-			} else {
-				log.Println("🎯 PostgreSQL connection verified successfully!")
-			}
-		}
+	// 1. Load and validate configuration. Fail immediately on any missing or
+	//    invalid required setting so infrastructure issues surface early.
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("❌ Configuration error: %v", err)
 	}
 
-	// Redis Connection Indicator
-	if redisURL == "" {
-		log.Println("⚠️ Warning: REDIS_URL is not configured")
-	} else {
-		log.Printf("📡 Redis URL configured: %s", redisURL)
+	// 2. Wire all infrastructure and build the application.
+	application, err := app.New(cfg)
+	if err != nil {
+		log.Fatalf("❌ Startup failed: %v", err)
 	}
 
-	log.Println("🟢 Notification Worker is successfully initialized and running.")
-	log.Println("ℹ️ Press Ctrl+C to terminate the process.")
+	// 3. Log the startup banner.
+	application.Start()
 
-	// Wait for termination signal
+	// 4. Block until the OS sends an interrupt or termination signal.
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 	<-stop
 
-	log.Println("🛑 Shutting down Notification Worker gracefully...")
+	// 5. Graceful shutdown: give in-flight work time to complete.
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.Worker.ShutdownTimeout)
+	defer cancel()
+
+	application.Shutdown(ctx)
 }
