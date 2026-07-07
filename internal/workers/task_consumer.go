@@ -95,7 +95,7 @@ func (w *TaskWorker) Process(ctx context.Context, ec entities.ExecutionContext) 
 		Job:      ec.Job,
 		App:      ec.App,
 		Provider: provider,
-		Data:     make(map[string]any),
+		Metadata: make(map[string]any),
 	}
 
 	res, err := w.pipeline.Run(ctx, pCtx)

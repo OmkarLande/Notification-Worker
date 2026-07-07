@@ -37,9 +37,9 @@ func (s *ProviderExecutionStep) Execute(ctx context.Context, execution *pipeline
 		return fmt.Errorf("provider execution failed: %w", err)
 	}
 
-	// Store the provider's ExecutionOutput in the shared data map
-	// so future steps (like templates or delivery) can consume it.
-	execution.Data[pipeline.ContextExecutionOutput] = output
+	// Store the provider's ExecutionOutput strongly typed
+	// so future steps (like insights and templates) can consume it.
+	execution.ExecutionOutput = output
 
 	return nil
 }

@@ -91,15 +91,21 @@ func New(cfg *config.AppConfig) (*Application, error) {
 
 	log.Info("Provider factory initialized", "registered", factory.RegisteredNames())
 
-	// 7. Execution Pipeline
+	// 7. Services (Content Generation)
+	insightService := services.NewInsightService(log)
+	templateService := services.NewTemplateService("internal/templates", log)
+
+	// 8. Execution Pipeline
 	execPipeline := pipeline.NewPipeline(log)
 	execPipeline.AddStep(steps.NewValidateContextStep())
 	execPipeline.AddStep(steps.NewProviderExecutionStep())
+	execPipeline.AddStep(steps.NewInsightGenerationStep(insightService))
+	execPipeline.AddStep(steps.NewPayloadTransformationStep(templateService))
 	execPipeline.AddStep(steps.NewFinalizeExecutionStep())
 
-	log.Info("Execution pipeline initialized", "steps", 3)
+	log.Info("Execution pipeline initialized", "steps", len(execPipeline.Steps()))
 
-	// 8. Services.
+	// 9. Core Services.
 	jobService := services.NewJobService(jobRepo, appRepo, statusCache, log)
 	jobExecService := services.NewJobExecutionService(
 		jobService, taskRepo, jobChannelRepo, channelTaskRepo, factory, statusCache, log,

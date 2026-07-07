@@ -31,6 +31,11 @@ func (p *Pipeline) AddStep(step Step) {
 	})
 }
 
+// Steps returns the registered steps in order.
+func (p *Pipeline) Steps() []Step {
+	return p.steps
+}
+
 // Run executes all steps sequentially. It logs start, completion, and duration
 // for each step. If a step fails, the pipeline halts immediately, logs the error,
 // and returns an ExecutionResult representing the failure.
