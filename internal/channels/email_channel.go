@@ -1,1 +1,1 @@
-package internal_channels
+package channels
