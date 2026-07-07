@@ -1,0 +1,10 @@
+DROP TABLE IF EXISTS task_logs;
+DROP TABLE IF EXISTS channel_tasks;
+DROP TABLE IF EXISTS tasks;
+DROP TABLE IF EXISTS job_channels;
+DROP TABLE IF EXISTS jobs;
+DROP TABLE IF EXISTS channels;
+DROP TABLE IF EXISTS channel_task_status;
+DROP TABLE IF EXISTS task_status;
+DROP TABLE IF EXISTS job_status;
+DROP TABLE IF EXISTS apps;
