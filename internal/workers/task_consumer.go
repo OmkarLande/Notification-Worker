@@ -10,17 +10,20 @@ import (
 	entities "github.com/OmkarLande/notification-worker/internal/entites"
 	"github.com/OmkarLande/notification-worker/internal/interfaces"
 	"github.com/OmkarLande/notification-worker/internal/logger"
+	"github.com/OmkarLande/notification-worker/internal/pipeline"
 	"github.com/OmkarLande/notification-worker/internal/providers"
 )
 
-// TaskWorker executes a single task. It is fully stateless — it receives a
-// complete ExecutionContext from the Dispatcher so it never queries repositories
-// during execution. App-specific behavior lives entirely in the provider.
+// TaskWorker executes a single task by orchestrating the execution pipeline.
+// It is fully stateless and generic — it receives a complete ExecutionContext
+// from the Dispatcher, resolves the provider, builds the pipeline context,
+// and delegates execution to the pipeline.
 type TaskWorker struct {
 	taskRepo    interfaces.TaskRepository
 	taskLogRepo interfaces.TaskLogRepository
 	factory     *providers.Factory
 	statusCache *cache.StatusCache
+	pipeline    *pipeline.Pipeline
 	log         logger.Logger
 }
 
@@ -30,6 +33,7 @@ func NewTaskWorker(
 	taskLogRepo interfaces.TaskLogRepository,
 	factory *providers.Factory,
 	statusCache *cache.StatusCache,
+	execPipeline *pipeline.Pipeline,
 	log logger.Logger,
 ) *TaskWorker {
 	return &TaskWorker{
@@ -37,6 +41,7 @@ func NewTaskWorker(
 		taskLogRepo: taskLogRepo,
 		factory:     factory,
 		statusCache: statusCache,
+		pipeline:    execPipeline,
 		log:         log,
 	}
 }
@@ -46,7 +51,7 @@ func NewTaskWorker(
 //	NeedToPick → Picked → Processing → Completed
 //	                              └──────────────→ Failed (on error)
 //
-// On failure, an error log is persisted to task_logs.
+// Execution is entirely delegated to the pipeline.
 func (w *TaskWorker) Process(ctx context.Context, ec entities.ExecutionContext) error {
 	taskID := ec.Task.ID
 
@@ -71,7 +76,7 @@ func (w *TaskWorker) Process(ctx context.Context, ec entities.ExecutionContext) 
 		w.log.Warn("Task: failed to record start time", "task_id", taskID, "error", err)
 	}
 
-	// Extract user_id from task arguments for logging.
+	// Extract user_id from task arguments for logging context.
 	var args struct {
 		UserID int `json:"user_id"`
 	}
@@ -84,13 +89,21 @@ func (w *TaskWorker) Process(ctx context.Context, ec entities.ExecutionContext) 
 		"user_id", args.UserID,
 	)
 
-	// 4. Execute via provider — no app-specific logic here.
-	output, err := provider.Execute(ctx, ec)
+	// 4. Build Pipeline Context and Run Pipeline
+	pCtx := &pipeline.ExecutionContext{
+		Task:     ec.Task,
+		Job:      ec.Job,
+		App:      ec.App,
+		Provider: provider,
+		Data:     make(map[string]any),
+	}
+
+	res, err := w.pipeline.Run(ctx, pCtx)
 	endTime := time.Now()
 	_ = w.taskRepo.UpdateEndTime(ctx, taskID, endTime)
 
-	if err != nil {
-		return w.failTask(ctx, ec, "provider_execute", err)
+	if err != nil || !res.Success {
+		return w.failTask(ctx, ec, "pipeline_execution", err)
 	}
 
 	// 5. Mark as Completed.
@@ -103,7 +116,7 @@ func (w *TaskWorker) Process(ctx context.Context, ec entities.ExecutionContext) 
 		"job", ec.Job.Name,
 		"provider", ec.App.Name,
 		"user_id", args.UserID,
-		"duration", output.Duration,
+		"duration", res.Duration,
 	)
 
 	return nil

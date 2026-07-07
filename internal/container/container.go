@@ -1,7 +1,3 @@
-// Package container provides the dependency injection container for the
-// Notification Worker. The container is the single resolution point for all
-// dependencies. The rest of the application must never construct dependencies
-// directly — they are always obtained through the container.
 package container
 
 import (
@@ -13,6 +9,7 @@ import (
 	"github.com/OmkarLande/notification-worker/internal/database"
 	"github.com/OmkarLande/notification-worker/internal/interfaces"
 	"github.com/OmkarLande/notification-worker/internal/logger"
+	"github.com/OmkarLande/notification-worker/internal/pipeline"
 	"github.com/OmkarLande/notification-worker/internal/providers"
 	"github.com/OmkarLande/notification-worker/internal/services"
 	"github.com/OmkarLande/notification-worker/internal/workers"
@@ -20,12 +17,12 @@ import (
 
 // Repositories groups all repository implementations.
 type Repositories struct {
-	Jobs        interfaces.JobRepository
-	Tasks       interfaces.TaskRepository
-	TaskLogs    interfaces.TaskLogRepository
-	Apps        interfaces.AppRepository
-	Channels    interfaces.ChannelRepository
-	JobChannels interfaces.JobChannelRepository
+	Jobs         interfaces.JobRepository
+	Tasks        interfaces.TaskRepository
+	TaskLogs     interfaces.TaskLogRepository
+	Apps         interfaces.AppRepository
+	Channels     interfaces.ChannelRepository
+	JobChannels  interfaces.JobChannelRepository
 	ChannelTasks interfaces.ChannelTaskRepository
 }
 
@@ -38,6 +35,7 @@ type Container struct {
 	StatusCache *cache.StatusCache
 
 	ProviderFactory *providers.Factory
+	Pipeline        *pipeline.Pipeline
 
 	Repos Repositories
 
@@ -56,6 +54,7 @@ func New(
 	db *database.Database,
 	statusCache *cache.StatusCache,
 	factory *providers.Factory,
+	execPipeline *pipeline.Pipeline,
 	repos Repositories,
 	jobService *services.JobService,
 	jobExecService *services.JobExecutionService,
@@ -78,6 +77,7 @@ func New(
 		DB:                  db,
 		StatusCache:         statusCache,
 		ProviderFactory:     factory,
+		Pipeline:            execPipeline,
 		Repos:               repos,
 		JobService:          jobService,
 		JobExecutionService: jobExecService,

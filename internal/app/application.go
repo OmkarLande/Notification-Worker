@@ -1,4 +1,3 @@
-// Package app owns the application lifecycle for the Notification Worker.
 package app
 
 import (
@@ -10,6 +9,8 @@ import (
 	"github.com/OmkarLande/notification-worker/internal/container"
 	"github.com/OmkarLande/notification-worker/internal/database"
 	"github.com/OmkarLande/notification-worker/internal/logger"
+	"github.com/OmkarLande/notification-worker/internal/pipeline"
+	"github.com/OmkarLande/notification-worker/internal/pipeline/steps"
 	"github.com/OmkarLande/notification-worker/internal/providers"
 	"github.com/OmkarLande/notification-worker/internal/providers/expense"
 	"github.com/OmkarLande/notification-worker/internal/providers/stackday"
@@ -26,17 +27,6 @@ type Application struct {
 
 // New wires all infrastructure and application components in dependency order
 // and returns a ready-to-start Application.
-//
-// Startup order:
-//  1. Logger
-//  2. Database pool + wrapper
-//  3. Status cache (in-memory, loaded from DB)
-//  4. Repositories
-//  5. Provider implementations (initialized in constructors)
-//  6. Provider factory + registration
-//  7. Services
-//  8. Workers
-//  9. Container
 func New(cfg *config.AppConfig) (*Application, error) {
 	// 1. Logger.
 	log := logger.New(cfg.Worker.AppEnv)
@@ -82,8 +72,7 @@ func New(cfg *config.AppConfig) (*Application, error) {
 	registry := providers.NewRegistry()
 	factory := providers.NewFactory(registry)
 
-	// 6. Register provider implementations (initialized in their constructors).
-	//    Stackday: connects to its own PostgreSQL in New().
+	// 6. Register provider implementations.
 	stackdayProvider, err := stackday.New(cfg.Database.URL, log)
 	if err != nil {
 		db.Close()
@@ -94,7 +83,6 @@ func New(cfg *config.AppConfig) (*Application, error) {
 		return nil, fmt.Errorf("app: register stackday: %w", err)
 	}
 
-	//    Expense: placeholder Firebase init in Phase 3.
 	expenseProvider := expense.New(cfg.Firebase, log)
 	if err := factory.Register("expense", expenseProvider); err != nil {
 		db.Close()
@@ -103,19 +91,27 @@ func New(cfg *config.AppConfig) (*Application, error) {
 
 	log.Info("Provider factory initialized", "registered", factory.RegisteredNames())
 
-	// 7. Services.
+	// 7. Execution Pipeline
+	execPipeline := pipeline.NewPipeline(log)
+	execPipeline.AddStep(steps.NewValidateContextStep())
+	execPipeline.AddStep(steps.NewProviderExecutionStep())
+	execPipeline.AddStep(steps.NewFinalizeExecutionStep())
+
+	log.Info("Execution pipeline initialized", "steps", 3)
+
+	// 8. Services.
 	jobService := services.NewJobService(jobRepo, appRepo, statusCache, log)
 	jobExecService := services.NewJobExecutionService(
 		jobService, taskRepo, jobChannelRepo, channelTaskRepo, factory, statusCache, log,
 	)
 
-	// 8. Workers.
-	taskWorker := workers.NewTaskWorker(taskRepo, taskLogRepo, factory, statusCache, log)
+	// 9. Workers.
+	taskWorker := workers.NewTaskWorker(taskRepo, taskLogRepo, factory, statusCache, execPipeline, log)
 	dispatcher := workers.NewTaskDispatcher(taskRepo, jobRepo, appRepo, taskWorker, statusCache, log)
 
-	// 9. Container.
+	// 10. Container.
 	c, err := container.New(
-		cfg, log, db, statusCache, factory,
+		cfg, log, db, statusCache, factory, execPipeline,
 		repos, jobService, jobExecService, dispatcher, taskWorker,
 	)
 	if err != nil {
@@ -148,7 +144,6 @@ func (a *Application) Shutdown(ctx context.Context) {
 }
 
 // Container returns the application's dependency container.
-// Intended for use in integration tests and the demo CLI.
 func (a *Application) Container() *container.Container {
 	return a.container
 }
