@@ -1,0 +1,75 @@
+version: '3.8'
+
+services:
+  # Postgres Database Service
+  postgres:
+    image: postgres:16-alpine
+    container_name: notification_postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres_password
+      POSTGRES_DB: notification_db
+    volumes:
+      - notification_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d notification_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Redis Caching & Queue Service
+  redis:
+    image: redis:7-alpine
+    container_name: notification_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - notification_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Go Application Service
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: notification_worker_app
+    restart: unless-stopped
+    ports:
+      - "8090:8090"
+    environment:
+      - APP_ENV=${APP_ENV}
+      - PORT=${PORT}
+      - DB_URL=postgres://postgres:postgres_password@postgres:5432/notification_db?sslmode=disable
+      - REDIS_URL=redis://redis:6379
+      - JWT_SECRET=${JWT_SECRET}
+      # SMTP Configuration
+      - SMTP_HOST=${SMTP_HOST}
+      - SMTP_PORT=${SMTP_PORT}
+      - SMTP_USER=${SMTP_USER}
+      - SMTP_PASSWORD=${SMTP_PASSWORD}
+      - SMTP_FROM=${SMTP_FROM}
+      # AWS Configuration
+      - AWS_REGION=${AWS_REGION}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_S3_BUCKET=${AWS_S3_BUCKET}
+      - PROFILE_IMAGE_MAX_SIZE_MB=${PROFILE_IMAGE_MAX_SIZE_MB}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  notification_postgres_data:
+    driver: local
+  notification_redis_data:
+    driver: local

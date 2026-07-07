@@ -1,0 +1,15 @@
+# Keep Docker build context clean and fast
+.git
+.gitignore
+.env
+.env.local
+.env.docker
+.env.example
+*.exe
+*.log
+docker-compose*.yml
+Dockerfile
+README.md
+node_modules
+dist
+tmp
