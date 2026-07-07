@@ -1,53 +1,66 @@
 // Package container provides the dependency injection container for the
-// Notification Worker. The container wires all infrastructure components
-// together and acts as the single resolution point for the application.
-// The rest of the application must never construct dependencies directly;
-// they are always obtained through the container.
+// Notification Worker. The container is the single resolution point for all
+// dependencies. The rest of the application must never construct dependencies
+// directly — they are always obtained through the container.
 package container
 
 import (
 	"context"
 	"fmt"
 
+	"github.com/OmkarLande/notification-worker/internal/cache"
 	"github.com/OmkarLande/notification-worker/internal/config"
 	"github.com/OmkarLande/notification-worker/internal/database"
+	"github.com/OmkarLande/notification-worker/internal/interfaces"
 	"github.com/OmkarLande/notification-worker/internal/logger"
 	"github.com/OmkarLande/notification-worker/internal/providers"
+	"github.com/OmkarLande/notification-worker/internal/services"
+	"github.com/OmkarLande/notification-worker/internal/workers"
 )
 
-// Container holds every infrastructure dependency used by the application.
-// Add new fields here as additional layers (repositories, services, channels)
-// are implemented in subsequent phases.
-type Container struct {
-	// Config is the fully loaded and validated application configuration.
-	Config *config.AppConfig
-
-	// Logger is the structured logger used throughout the application.
-	Logger logger.Logger
-
-	// DB is the wrapped PostgreSQL connection pool.
-	DB *database.Database
-
-	// ProviderFactory resolves app-specific notification providers by name.
-	ProviderFactory *providers.Factory
-
-	// --- Phase 3: Repositories ---
-	// Repositories *repositories.Registry
-
-	// --- Phase 4: Services ---
-	// Services *services.Registry
-
-	// --- Phase 5: Channels ---
-	// Channels *channels.Registry
+// Repositories groups all repository implementations.
+type Repositories struct {
+	Jobs        interfaces.JobRepository
+	Tasks       interfaces.TaskRepository
+	TaskLogs    interfaces.TaskLogRepository
+	Apps        interfaces.AppRepository
+	Channels    interfaces.ChannelRepository
+	JobChannels interfaces.JobChannelRepository
+	ChannelTasks interfaces.ChannelTaskRepository
 }
 
-// New constructs a Container from already-initialized dependencies.
+// Container holds every dependency used by the application. Dependencies are
+// resolved through this struct; global state and service locators are avoided.
+type Container struct {
+	Config      *config.AppConfig
+	Logger      logger.Logger
+	DB          *database.Database
+	StatusCache *cache.StatusCache
+
+	ProviderFactory *providers.Factory
+
+	Repos Repositories
+
+	JobService          *services.JobService
+	JobExecutionService *services.JobExecutionService
+
+	Dispatcher *workers.TaskDispatcher
+	TaskWorker *workers.TaskWorker
+}
+
+// New constructs a Container from fully initialized dependencies.
 // All arguments are required; passing nil for any will return an error.
 func New(
 	cfg *config.AppConfig,
 	log logger.Logger,
 	db *database.Database,
+	statusCache *cache.StatusCache,
 	factory *providers.Factory,
+	repos Repositories,
+	jobService *services.JobService,
+	jobExecService *services.JobExecutionService,
+	dispatcher *workers.TaskDispatcher,
+	taskWorker *workers.TaskWorker,
 ) (*Container, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("container: config must not be nil")
@@ -58,20 +71,22 @@ func New(
 	if db == nil {
 		return nil, fmt.Errorf("container: database must not be nil")
 	}
-	if factory == nil {
-		return nil, fmt.Errorf("container: provider factory must not be nil")
-	}
 
 	return &Container{
-		Config:          cfg,
-		Logger:          log,
-		DB:              db,
-		ProviderFactory: factory,
+		Config:              cfg,
+		Logger:              log,
+		DB:                  db,
+		StatusCache:         statusCache,
+		ProviderFactory:     factory,
+		Repos:               repos,
+		JobService:          jobService,
+		JobExecutionService: jobExecService,
+		Dispatcher:          dispatcher,
+		TaskWorker:          taskWorker,
 	}, nil
 }
 
 // Health performs a liveness check on all critical infrastructure components.
-// It is intended to back a future /health HTTP endpoint.
 func (c *Container) Health(ctx context.Context) error {
 	if err := c.DB.Health(ctx); err != nil {
 		return fmt.Errorf("container health: %w", err)

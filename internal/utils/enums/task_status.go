@@ -1,1 +1,1 @@
-package internal_enums
+package enums

@@ -1,77 +1,133 @@
 // Package app owns the application lifecycle for the Notification Worker.
-// It is responsible for wiring all infrastructure dependencies and orchestrating
-// the startup and shutdown sequences. Keeping lifecycle logic here — rather than
-// in main — makes the application testable and keeps main.go minimal.
 package app
 
 import (
 	"context"
 	"fmt"
 
+	"github.com/OmkarLande/notification-worker/internal/cache"
 	"github.com/OmkarLande/notification-worker/internal/config"
 	"github.com/OmkarLande/notification-worker/internal/container"
 	"github.com/OmkarLande/notification-worker/internal/database"
 	"github.com/OmkarLande/notification-worker/internal/logger"
 	"github.com/OmkarLande/notification-worker/internal/providers"
+	"github.com/OmkarLande/notification-worker/internal/providers/expense"
+	"github.com/OmkarLande/notification-worker/internal/providers/stackday"
+	"github.com/OmkarLande/notification-worker/internal/repositories"
+	"github.com/OmkarLande/notification-worker/internal/services"
+	"github.com/OmkarLande/notification-worker/internal/workers"
 )
 
 // Application owns the complete lifecycle of the Notification Worker.
-// It holds the fully wired container and exposes Start / Shutdown methods
-// that main.go calls in sequence.
 type Application struct {
 	container *container.Container
 	cfg       *config.AppConfig
 }
 
-// New wires all infrastructure components in the correct dependency order and
-// returns a ready-to-start Application. It returns a descriptive error if any
-// component fails to initialize so that main.go can exit immediately with a
-// useful message.
+// New wires all infrastructure and application components in dependency order
+// and returns a ready-to-start Application.
 //
 // Startup order:
 //  1. Logger
-//  2. Database connection pool
-//  3. Database wrapper
-//  4. Provider registry + factory
-//  5. Container
+//  2. Database pool + wrapper
+//  3. Status cache (in-memory, loaded from DB)
+//  4. Repositories
+//  5. Provider implementations (initialized in constructors)
+//  6. Provider factory + registration
+//  7. Services
+//  8. Workers
+//  9. Container
 func New(cfg *config.AppConfig) (*Application, error) {
-	// 1. Logger — must be first so every subsequent step can log.
+	// 1. Logger.
 	log := logger.New(cfg.Worker.AppEnv)
 	log.Info("Logger initialized", "env", cfg.Worker.AppEnv, "worker_id", cfg.Worker.WorkerID)
 
-	// 2. Database connection pool.
+	// 2. Database.
 	pool, err := database.NewPool(cfg.Database, log)
 	if err != nil {
 		return nil, fmt.Errorf("app: %w", err)
 	}
-
-	// 3. Wrap the pool in the Database abstraction.
 	db := database.New(pool)
 
-	// 4. Provider registry and factory (empty — implementations registered in
-	//    Phase 3 when individual providers are built).
+	// 3. Status cache — loaded once, read-only during execution.
+	statusCache, err := cache.Load(context.Background(), db.Pool)
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("app: status cache: %w", err)
+	}
+	log.Info("Status cache loaded",
+		"task_statuses", len(statusCache.TaskStatuses()),
+	)
+
+	// 4. Repositories.
+	jobRepo := repositories.NewJobRepository(db.Pool)
+	taskRepo := repositories.NewTaskRepository(db.Pool)
+	taskLogRepo := repositories.NewTaskLogRepository(db.Pool)
+	appRepo := repositories.NewAppRepository(db.Pool)
+	channelRepo := repositories.NewChannelRepository(db.Pool)
+	jobChannelRepo := repositories.NewJobChannelRepository(db.Pool)
+	channelTaskRepo := repositories.NewChannelTaskRepository(db.Pool)
+
+	repos := container.Repositories{
+		Jobs:         jobRepo,
+		Tasks:        taskRepo,
+		TaskLogs:     taskLogRepo,
+		Apps:         appRepo,
+		Channels:     channelRepo,
+		JobChannels:  jobChannelRepo,
+		ChannelTasks: channelTaskRepo,
+	}
+
+	// 5. Provider factory.
 	registry := providers.NewRegistry()
 	factory := providers.NewFactory(registry)
 
-	log.Info("Provider factory initialized", "registered_providers", len(factory.RegisteredNames()))
-
-	// 5. Assemble the DI container.
-	c, err := container.New(cfg, log, db, factory)
+	// 6. Register provider implementations (initialized in their constructors).
+	//    Stackday: connects to its own PostgreSQL in New().
+	stackdayProvider, err := stackday.New(cfg.Database.URL, log)
 	if err != nil {
 		db.Close()
-		return nil, fmt.Errorf("app: failed to build container: %w", err)
+		return nil, fmt.Errorf("app: stackday provider: %w", err)
+	}
+	if err := factory.Register("stackday", stackdayProvider); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("app: register stackday: %w", err)
+	}
+
+	//    Expense: placeholder Firebase init in Phase 3.
+	expenseProvider := expense.New(cfg.Firebase, log)
+	if err := factory.Register("expense", expenseProvider); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("app: register expense: %w", err)
+	}
+
+	log.Info("Provider factory initialized", "registered", factory.RegisteredNames())
+
+	// 7. Services.
+	jobService := services.NewJobService(jobRepo, appRepo, statusCache, log)
+	jobExecService := services.NewJobExecutionService(
+		jobService, taskRepo, jobChannelRepo, channelTaskRepo, factory, statusCache, log,
+	)
+
+	// 8. Workers.
+	taskWorker := workers.NewTaskWorker(taskRepo, taskLogRepo, factory, statusCache, log)
+	dispatcher := workers.NewTaskDispatcher(taskRepo, jobRepo, appRepo, taskWorker, statusCache, log)
+
+	// 9. Container.
+	c, err := container.New(
+		cfg, log, db, statusCache, factory,
+		repos, jobService, jobExecService, dispatcher, taskWorker,
+	)
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("app: container: %w", err)
 	}
 
 	log.Info("Dependency container built successfully")
-
-	return &Application{
-		container: c,
-		cfg:       cfg,
-	}, nil
+	return &Application{container: c, cfg: cfg}, nil
 }
 
-// Start logs the startup banner. In future phases this will also start the
-// job scheduler, task consumers, and HTTP health server.
+// Start logs the startup banner.
 func (a *Application) Start() {
 	a.container.Logger.Info(
 		"🚀 Notification Worker started",
@@ -83,21 +139,16 @@ func (a *Application) Start() {
 	a.container.Logger.Info("Press Ctrl+C to stop.")
 }
 
-// Shutdown performs an orderly teardown of all resources. It should be called
-// after the OS signal has been received and before the process exits.
+// Shutdown performs an orderly teardown of all resources.
 func (a *Application) Shutdown(ctx context.Context) {
 	log := a.container.Logger
-	log.Info("Shutting down Notification Worker gracefully...",
-		"worker_id", a.cfg.Worker.WorkerID,
-	)
-
+	log.Info("Shutting down Notification Worker gracefully...", "worker_id", a.cfg.Worker.WorkerID)
 	a.container.DB.Close()
-
 	log.Info("Shutdown complete. Goodbye.")
 }
 
 // Container returns the application's dependency container.
-// Intended for use in integration tests and health checks.
+// Intended for use in integration tests and the demo CLI.
 func (a *Application) Container() *container.Container {
 	return a.container
 }
