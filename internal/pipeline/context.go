@@ -1,23 +1,58 @@
 package pipeline
 
 import (
+	"github.com/OmkarLande/notification-worker/internal/channels"
+	"github.com/OmkarLande/notification-worker/internal/contracts"
 	entities "github.com/OmkarLande/notification-worker/internal/entites"
 	"github.com/OmkarLande/notification-worker/internal/interfaces"
+	"github.com/OmkarLande/notification-worker/internal/providers/dto"
 )
 
-const (
-	// ContextExecutionOutput is the key used in ExecutionContext.Data to store
-	// the provider's dto.ExecutionOutput. Future steps (like templates or delivery)
-	// will consume this payload.
-	ContextExecutionOutput = "executionOutput"
-)
+// DeliveryContext holds delivery-specific data without polluting the main context.
+type DeliveryContext struct {
+	Results []channels.DeliveryResult
+}
+
+// ExecutionMetrics tracks operational timing state during the pipeline execution.
+type ExecutionMetrics struct {
+	PipelineStart time.Time
+	StepDurations map[string]time.Duration
+}
 
 // ExecutionContext represents the state of a single Task execution as it flows
-// through the pipeline. Every step can read from or enrich the Data map.
+// through the transformation pipeline. Every step enriches the context with
+// strongly-typed payloads.
 type ExecutionContext struct {
+	// Base context setup by Dispatcher/Worker
 	Task     *entities.Task
 	Job      *entities.Job
 	App      *entities.App
 	Provider interfaces.Provider
-	Data     map[string]any
+
+	// ExecutionOutput is populated by the ProviderExecutionStep
+	ExecutionOutput *dto.ExecutionOutput
+
+	// Insight is populated by the InsightGenerationStep
+	Insight *contracts.InsightResult
+
+	// Payloads are populated by the PayloadTransformationStep
+	EmailPayload    *contracts.EmailPayload
+	DiscordPayload  *contracts.DiscordPayload
+	SlackPayload    *contracts.SlackPayload
+	WhatsAppPayload *contracts.WhatsAppPayload
+
+	// Delivery holds results of the ChannelDeliveryStep
+	Delivery *DeliveryContext
+
+	// Metrics holds operational timing data.
+	Metrics *ExecutionMetrics
+
+	// Error records the first pipeline step failure.
+	Error error
+	// FailedStep records which step caused the pipeline failure.
+	FailedStep string
+
+	// Metadata provides an extensibility point for temporary cross-step state.
+	// It should NOT be used for primary execution state.
+	Metadata map[string]any
 }

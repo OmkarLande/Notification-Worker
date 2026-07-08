@@ -26,7 +26,7 @@ func NewJobRepository(pool *pgxpool.Pool) *PostgresJobRepository {
 func (r *PostgresJobRepository) GetByID(ctx context.Context, id int) (*entities.Job, error) {
 	const q = `
 		SELECT id, app_id, name, COALESCE(description,''), status_id,
-		       max_thread_count, COALESCE(arguments,'{}')::text, created_at, updated_at
+		       max_thread_count, max_retry_count, COALESCE(arguments,'{}')::text, created_at, updated_at
 		FROM jobs WHERE id = $1`
 
 	row := r.pool.QueryRow(ctx, q, id)
@@ -34,7 +34,7 @@ func (r *PostgresJobRepository) GetByID(ctx context.Context, id int) (*entities.
 	var args []byte
 	if err := row.Scan(
 		&j.ID, &j.AppID, &j.Name, &j.Description,
-		&j.StatusID, &j.MaxThreadCount, &args,
+		&j.StatusID, &j.MaxThreadCount, &j.MaxRetryCount, &args,
 		&j.CreatedAt, &j.UpdatedAt,
 	); err != nil {
 		return nil, fmt.Errorf("job repository: GetByID(%d): %w", id, err)
@@ -47,7 +47,7 @@ func (r *PostgresJobRepository) GetByID(ctx context.Context, id int) (*entities.
 func (r *PostgresJobRepository) GetActiveJobs(ctx context.Context) ([]entities.Job, error) {
 	const q = `
 		SELECT j.id, j.app_id, j.name, COALESCE(j.description,''), j.status_id,
-		       j.max_thread_count, COALESCE(j.arguments,'{}')::text, j.created_at, j.updated_at
+		       j.max_thread_count, j.max_retry_count, COALESCE(j.arguments,'{}')::text, j.created_at, j.updated_at
 		FROM jobs j
 		JOIN job_status js ON js.id = j.status_id
 		WHERE js.name = 'Active'
@@ -65,7 +65,7 @@ func (r *PostgresJobRepository) GetActiveJobs(ctx context.Context) ([]entities.J
 		var args []byte
 		if err := rows.Scan(
 			&j.ID, &j.AppID, &j.Name, &j.Description,
-			&j.StatusID, &j.MaxThreadCount, &args,
+			&j.StatusID, &j.MaxThreadCount, &j.MaxRetryCount, &args,
 			&j.CreatedAt, &j.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("job repository: GetActiveJobs scan: %w", err)

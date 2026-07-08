@@ -1,0 +1,9 @@
+**Stackday Daily Digest**
+User ID: {{ .UserID }}
+
+*Pending Tasks:*
+{{ range .PendingTasks }}- {{ .Title }}
+{{ end }}
+*Goals:*
+{{ range .Goals }}- {{ .Title }} ({{ .Progress }}%)
+{{ end }}

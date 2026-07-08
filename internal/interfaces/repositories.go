@@ -45,4 +45,5 @@ type JobChannelRepository interface {
 // ChannelTaskRepository manages channel_tasks rows.
 type ChannelTaskRepository interface {
 	Create(ctx context.Context, taskID, channelID, statusID int) error
+	GetChannelsByTaskID(ctx context.Context, taskID int) ([]entities.Channel, error)
 }

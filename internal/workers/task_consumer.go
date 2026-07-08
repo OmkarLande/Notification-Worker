@@ -20,7 +20,6 @@ import (
 // and delegates execution to the pipeline.
 type TaskWorker struct {
 	taskRepo    interfaces.TaskRepository
-	taskLogRepo interfaces.TaskLogRepository
 	factory     *providers.Factory
 	statusCache *cache.StatusCache
 	pipeline    *pipeline.Pipeline
@@ -30,7 +29,6 @@ type TaskWorker struct {
 // NewTaskWorker constructs a TaskWorker.
 func NewTaskWorker(
 	taskRepo interfaces.TaskRepository,
-	taskLogRepo interfaces.TaskLogRepository,
 	factory *providers.Factory,
 	statusCache *cache.StatusCache,
 	execPipeline *pipeline.Pipeline,
@@ -38,7 +36,6 @@ func NewTaskWorker(
 ) *TaskWorker {
 	return &TaskWorker{
 		taskRepo:    taskRepo,
-		taskLogRepo: taskLogRepo,
 		factory:     factory,
 		statusCache: statusCache,
 		pipeline:    execPipeline,
@@ -95,7 +92,7 @@ func (w *TaskWorker) Process(ctx context.Context, ec entities.ExecutionContext) 
 		Job:      ec.Job,
 		App:      ec.App,
 		Provider: provider,
-		Data:     make(map[string]any),
+		Metadata: make(map[string]any),
 	}
 
 	res, err := w.pipeline.Run(ctx, pCtx)
@@ -141,17 +138,6 @@ func (w *TaskWorker) failTask(ctx context.Context, ec entities.ExecutionContext,
 		"job", ec.Job.Name, "error", cause)
 
 	_ = w.updateStatus(ctx, taskID, "Failed")
-
-	errPayload, _ := json.Marshal(map[string]any{
-		"step":    step,
-		"message": cause.Error(),
-	})
-	_ = w.taskLogRepo.Create(ctx, &entities.TaskLog{
-		TaskID:   taskID,
-		JobID:    ec.Job.ID,
-		StepName: step,
-		ErrorLog: errPayload,
-	})
 
 	return fmt.Errorf("task worker [task=%d step=%s]: %w", taskID, step, cause)
 }

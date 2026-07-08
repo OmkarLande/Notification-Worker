@@ -5,6 +5,11 @@ import (
 	"fmt"
 
 	"github.com/OmkarLande/notification-worker/internal/cache"
+	"github.com/OmkarLande/notification-worker/internal/channels"
+	"github.com/OmkarLande/notification-worker/internal/channels/discord"
+	"github.com/OmkarLande/notification-worker/internal/channels/email"
+	"github.com/OmkarLande/notification-worker/internal/channels/slack"
+	"github.com/OmkarLande/notification-worker/internal/channels/whatsapp"
 	"github.com/OmkarLande/notification-worker/internal/config"
 	"github.com/OmkarLande/notification-worker/internal/container"
 	"github.com/OmkarLande/notification-worker/internal/database"
@@ -14,8 +19,11 @@ import (
 	"github.com/OmkarLande/notification-worker/internal/providers"
 	"github.com/OmkarLande/notification-worker/internal/providers/expense"
 	"github.com/OmkarLande/notification-worker/internal/providers/stackday"
+	"github.com/OmkarLande/notification-worker/internal/reliability"
 	"github.com/OmkarLande/notification-worker/internal/repositories"
 	"github.com/OmkarLande/notification-worker/internal/services"
+	"github.com/OmkarLande/notification-worker/internal/services/deliverymanager"
+	"github.com/OmkarLande/notification-worker/internal/services/payloadresolver"
 	"github.com/OmkarLande/notification-worker/internal/workers"
 )
 
@@ -91,22 +99,44 @@ func New(cfg *config.AppConfig) (*Application, error) {
 
 	log.Info("Provider factory initialized", "registered", factory.RegisteredNames())
 
-	// 7. Execution Pipeline
+	// 7. Services (Content Generation & Delivery)
+	insightService := services.NewInsightService(log)
+	templateService := services.NewTemplateService("internal/templates", log)
+
+	channelRegistry := channels.NewRegistry()
+	channelRegistry.Register(email.NewEmailChannel(cfg.SMTP))
+	channelRegistry.Register(discord.NewDiscordChannel())
+	channelRegistry.Register(slack.NewSlackChannel())
+	channelRegistry.Register(whatsapp.NewWhatsAppChannel())
+
+	payloadResolver := payloadresolver.New()
+	deliveryManager := deliverymanager.New(channelTaskRepo, channelRegistry, payloadResolver, log)
+
+	// 8. Reliability Services
+	retryService := reliability.NewRetryService(taskRepo, channelTaskRepo, statusCache, log)
+	metricsService := reliability.NewMetricsService(log)
+	taskLogService := reliability.NewTaskLogService(taskLogRepo)
+	reliabilityManager := reliability.NewManager(retryService, metricsService, taskLogService, log)
+
+	// 9. Execution Pipeline
 	execPipeline := pipeline.NewPipeline(log)
 	execPipeline.AddStep(steps.NewValidateContextStep())
 	execPipeline.AddStep(steps.NewProviderExecutionStep())
-	execPipeline.AddStep(steps.NewFinalizeExecutionStep())
+	execPipeline.AddStep(steps.NewInsightGenerationStep(insightService))
+	execPipeline.AddStep(steps.NewPayloadTransformationStep(templateService))
+	execPipeline.AddStep(steps.NewChannelDeliveryStep(deliveryManager))
+	execPipeline.AddStep(steps.NewFinalizeExecutionStep(reliabilityManager))
 
-	log.Info("Execution pipeline initialized", "steps", 3)
+	log.Info("Execution pipeline initialized", "steps", len(execPipeline.Steps()))
 
-	// 8. Services.
+	// 10. Core Services.
 	jobService := services.NewJobService(jobRepo, appRepo, statusCache, log)
 	jobExecService := services.NewJobExecutionService(
 		jobService, taskRepo, jobChannelRepo, channelTaskRepo, factory, statusCache, log,
 	)
 
-	// 9. Workers.
-	taskWorker := workers.NewTaskWorker(taskRepo, taskLogRepo, factory, statusCache, execPipeline, log)
+	// 11. Workers.
+	taskWorker := workers.NewTaskWorker(taskRepo, factory, statusCache, execPipeline, log)
 	dispatcher := workers.NewTaskDispatcher(taskRepo, jobRepo, appRepo, taskWorker, statusCache, log)
 
 	// 10. Container.

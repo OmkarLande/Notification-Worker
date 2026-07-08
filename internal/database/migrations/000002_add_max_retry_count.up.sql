@@ -1,0 +1,1 @@
+ALTER TABLE jobs ADD COLUMN max_retry_count INT NOT NULL DEFAULT 3;

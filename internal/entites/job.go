@@ -16,6 +16,7 @@ type Job struct {
 	Description    string
 	StatusID       int
 	MaxThreadCount int
+	MaxRetryCount  int
 	Arguments      json.RawMessage
 	CreatedAt      time.Time
 	UpdatedAt      time.Time

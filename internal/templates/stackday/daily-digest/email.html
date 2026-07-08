@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Stackday Daily Digest</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; }
+        .card { border: 1px solid #ccc; padding: 15px; border-radius: 8px; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>Stackday Daily Digest</h1>
+        <p>Hello User {{ .UserID }}!</p>
+        
+        <h3>Pending Tasks</h3>
+        <ul>
+        {{ range .PendingTasks }}
+            <li>{{ .Title }} (Due: {{ .DueAt }})</li>
+        {{ end }}
+        </ul>
+
+        <h3>Goals</h3>
+        <ul>
+        {{ range .Goals }}
+            <li>{{ .Title }}: {{ .Progress }}%</li>
+        {{ end }}
+        </ul>
+    </div>
+</body>
+</html>
