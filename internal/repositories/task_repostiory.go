@@ -24,11 +24,11 @@ func NewTaskRepository(pool *pgxpool.Pool) *PostgresTaskRepository {
 func (r *PostgresTaskRepository) Create(ctx context.Context, t *entities.Task) (*entities.Task, error) {
 	const q = `
 		INSERT INTO tasks (job_id, parent_task_id, status_id, arguments, task_trigger_time, current_retry_count)
-		VALUES ($1, $2, $3, $4, $5, 0)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING id, created_at, updated_at`
 
 	row := r.pool.QueryRow(ctx, q,
-		t.JobID, t.ParentTaskID, t.StatusID, t.Arguments, t.TaskTriggerTime,
+		t.JobID, t.ParentTaskID, t.StatusID, t.Arguments, t.TaskTriggerTime, t.CurrentRetryCount,
 	)
 	if err := row.Scan(&t.ID, &t.CreatedAt, &t.UpdatedAt); err != nil {
 		return nil, fmt.Errorf("task repository: Create: %w", err)

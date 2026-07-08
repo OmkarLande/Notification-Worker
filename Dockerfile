@@ -38,6 +38,9 @@ COPY --from=builder /app/notification-worker /app/notification-worker
 # (Check if the internal/database/migrations folder exists before running container)
 COPY internal/database/migrations ./internal/database/migrations
 
+# Copy notification templates needed at runtime by the TemplateService
+COPY internal/templates ./internal/templates
+
 # Expose Go application port
 EXPOSE 8090
 
