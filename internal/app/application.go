@@ -5,6 +5,11 @@ import (
 	"fmt"
 
 	"github.com/OmkarLande/notification-worker/internal/cache"
+	"github.com/OmkarLande/notification-worker/internal/channels"
+	"github.com/OmkarLande/notification-worker/internal/channels/discord"
+	"github.com/OmkarLande/notification-worker/internal/channels/email"
+	"github.com/OmkarLande/notification-worker/internal/channels/slack"
+	"github.com/OmkarLande/notification-worker/internal/channels/whatsapp"
 	"github.com/OmkarLande/notification-worker/internal/config"
 	"github.com/OmkarLande/notification-worker/internal/container"
 	"github.com/OmkarLande/notification-worker/internal/database"
@@ -16,6 +21,8 @@ import (
 	"github.com/OmkarLande/notification-worker/internal/providers/stackday"
 	"github.com/OmkarLande/notification-worker/internal/repositories"
 	"github.com/OmkarLande/notification-worker/internal/services"
+	"github.com/OmkarLande/notification-worker/internal/services/deliverymanager"
+	"github.com/OmkarLande/notification-worker/internal/services/payloadresolver"
 	"github.com/OmkarLande/notification-worker/internal/workers"
 )
 
@@ -91,9 +98,18 @@ func New(cfg *config.AppConfig) (*Application, error) {
 
 	log.Info("Provider factory initialized", "registered", factory.RegisteredNames())
 
-	// 7. Services (Content Generation)
+	// 7. Services (Content Generation & Delivery)
 	insightService := services.NewInsightService(log)
 	templateService := services.NewTemplateService("internal/templates", log)
+
+	channelRegistry := channels.NewRegistry()
+	channelRegistry.Register(email.NewEmailChannel(cfg.SMTP))
+	channelRegistry.Register(discord.NewDiscordChannel())
+	channelRegistry.Register(slack.NewSlackChannel())
+	channelRegistry.Register(whatsapp.NewWhatsAppChannel())
+
+	payloadResolver := payloadresolver.New()
+	deliveryManager := deliverymanager.New(channelTaskRepo, channelRegistry, payloadResolver, log)
 
 	// 8. Execution Pipeline
 	execPipeline := pipeline.NewPipeline(log)
@@ -101,6 +117,7 @@ func New(cfg *config.AppConfig) (*Application, error) {
 	execPipeline.AddStep(steps.NewProviderExecutionStep())
 	execPipeline.AddStep(steps.NewInsightGenerationStep(insightService))
 	execPipeline.AddStep(steps.NewPayloadTransformationStep(templateService))
+	execPipeline.AddStep(steps.NewChannelDeliveryStep(deliveryManager))
 	execPipeline.AddStep(steps.NewFinalizeExecutionStep())
 
 	log.Info("Execution pipeline initialized", "steps", len(execPipeline.Steps()))

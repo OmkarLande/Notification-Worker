@@ -18,24 +18,40 @@ type InsightResult struct {
 	Metadata map[string]any
 }
 
+// Payload is a marker interface for channel-specific payloads.
+// It ensures compile-time safety and prevents passing arbitrary data to channels.
+type Payload interface {
+	Channel() string
+}
+
 // EmailPayload represents a fully rendered email ready for SMTP delivery.
 type EmailPayload struct {
+	To      string
 	Subject string
 	Html    string
 }
 
+func (EmailPayload) Channel() string { return "email" }
+
 // DiscordPayload represents a fully rendered payload ready for Discord Webhooks.
 type DiscordPayload struct {
-	Content string
-	Embeds  []any
+	WebhookURL string
+	Content    string
+	Embeds     []any
 }
+
+func (DiscordPayload) Channel() string { return "discord" }
 
 // SlackPayload represents a fully rendered payload ready for Slack Webhooks.
 type SlackPayload struct {
 	Blocks []any
 }
 
+func (SlackPayload) Channel() string { return "slack" }
+
 // WhatsAppPayload represents a fully rendered text payload for WhatsApp.
 type WhatsAppPayload struct {
 	Text string
 }
+
+func (WhatsAppPayload) Channel() string { return "whatsapp" }

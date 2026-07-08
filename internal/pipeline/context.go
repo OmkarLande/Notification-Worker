@@ -1,11 +1,17 @@
 package pipeline
 
 import (
+	"github.com/OmkarLande/notification-worker/internal/channels"
 	"github.com/OmkarLande/notification-worker/internal/contracts"
 	entities "github.com/OmkarLande/notification-worker/internal/entites"
 	"github.com/OmkarLande/notification-worker/internal/interfaces"
 	"github.com/OmkarLande/notification-worker/internal/providers/dto"
 )
+
+// DeliveryContext holds delivery-specific data without polluting the main context.
+type DeliveryContext struct {
+	Results []channels.DeliveryResult
+}
 
 // ExecutionContext represents the state of a single Task execution as it flows
 // through the transformation pipeline. Every step enriches the context with
@@ -28,6 +34,9 @@ type ExecutionContext struct {
 	DiscordPayload  *contracts.DiscordPayload
 	SlackPayload    *contracts.SlackPayload
 	WhatsAppPayload *contracts.WhatsAppPayload
+
+	// Delivery holds results of the ChannelDeliveryStep
+	Delivery *DeliveryContext
 
 	// Metadata provides an extensibility point for temporary cross-step state.
 	// It should NOT be used for primary execution state.
