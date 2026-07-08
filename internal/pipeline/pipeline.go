@@ -40,40 +40,63 @@ func (p *Pipeline) Steps() []Step {
 // for each step. If a step fails, the pipeline halts immediately, logs the error,
 // and returns an ExecutionResult representing the failure.
 func (p *Pipeline) Run(ctx context.Context, execution *ExecutionContext) (*ExecutionResult, error) {
-	pipelineStart := time.Now()
+	if execution.Metrics == nil {
+		execution.Metrics = &ExecutionMetrics{
+			PipelineStart: time.Now(),
+			StepDurations: make(map[string]time.Duration),
+		}
+	} else if execution.Metrics.PipelineStart.IsZero() {
+		execution.Metrics.PipelineStart = time.Now()
+	}
 
 	for _, step := range p.steps {
 		stepName := step.Name()
 		taskID := execution.Task.ID
 		jobID := execution.Job.ID
 
+		// If pipeline has failed, skip all remaining steps except FinalizeExecutionStep
+		if execution.Error != nil && stepName != "FinalizeExecutionStep" {
+			continue
+		}
+
 		p.logger.Info("Pipeline Step Started", "step", stepName, "task_id", taskID)
 		stepStart := time.Now()
 
-		if err := step.Execute(ctx, execution); err != nil {
+		err := step.Execute(ctx, execution)
+		duration := time.Since(stepStart)
+		execution.Metrics.StepDurations[stepName] = duration
+
+		if err != nil {
 			p.logger.Error("Pipeline Step Failed",
 				"step", stepName,
 				"task_id", taskID,
 				"job_id", jobID,
 				"error", err,
 			)
-			return &ExecutionResult{
-				Success:  false,
-				Duration: time.Since(pipelineStart),
-				Metadata: map[string]any{"failed_step": stepName},
-			}, err
+			if execution.Error == nil {
+				// Record the FIRST failure
+				execution.Error = err
+				execution.FailedStep = stepName
+			}
+			// Note: We don't return early anymore. We continue the loop
+			// so that FinalizeExecutionStep can process the failure.
+		} else {
+			p.logger.Info("Pipeline Step Completed",
+				"step", stepName,
+				"task_id", taskID,
+				"duration", duration,
+			)
 		}
-
-		p.logger.Info("Pipeline Step Completed",
-			"step", stepName,
-			"task_id", taskID,
-			"duration", time.Since(stepStart),
-		)
 	}
 
-	return &ExecutionResult{
-		Success:  true,
-		Duration: time.Since(pipelineStart),
+	success := execution.Error == nil
+	res := &ExecutionResult{
+		Success:  success,
+		Duration: time.Since(execution.Metrics.PipelineStart),
 		Metadata: make(map[string]any),
-	}, nil
+	}
+	if !success {
+		res.Metadata["failed_step"] = execution.FailedStep
+	}
+	return res, execution.Error
 }

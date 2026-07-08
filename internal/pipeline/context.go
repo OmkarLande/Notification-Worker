@@ -13,6 +13,12 @@ type DeliveryContext struct {
 	Results []channels.DeliveryResult
 }
 
+// ExecutionMetrics tracks operational timing state during the pipeline execution.
+type ExecutionMetrics struct {
+	PipelineStart time.Time
+	StepDurations map[string]time.Duration
+}
+
 // ExecutionContext represents the state of a single Task execution as it flows
 // through the transformation pipeline. Every step enriches the context with
 // strongly-typed payloads.
@@ -37,6 +43,14 @@ type ExecutionContext struct {
 
 	// Delivery holds results of the ChannelDeliveryStep
 	Delivery *DeliveryContext
+
+	// Metrics holds operational timing data.
+	Metrics *ExecutionMetrics
+
+	// Error records the first pipeline step failure.
+	Error error
+	// FailedStep records which step caused the pipeline failure.
+	FailedStep string
 
 	// Metadata provides an extensibility point for temporary cross-step state.
 	// It should NOT be used for primary execution state.

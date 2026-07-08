@@ -4,15 +4,18 @@ import (
 	"context"
 
 	"github.com/OmkarLande/notification-worker/internal/pipeline"
+	"github.com/OmkarLande/notification-worker/internal/reliability"
 )
 
 // FinalizeExecutionStep handles final cleanup, metrics, or metadata persistence.
-// In Phase 4 it acts as a placeholder at the end of the pipeline.
-// Logging is entirely owned by the Pipeline runner.
-type FinalizeExecutionStep struct{}
+type FinalizeExecutionStep struct {
+	reliabilityManager *reliability.Manager
+}
 
-func NewFinalizeExecutionStep() *FinalizeExecutionStep {
-	return &FinalizeExecutionStep{}
+func NewFinalizeExecutionStep(rm *reliability.Manager) *FinalizeExecutionStep {
+	return &FinalizeExecutionStep{
+		reliabilityManager: rm,
+	}
 }
 
 func (s *FinalizeExecutionStep) Name() string {
@@ -23,8 +26,9 @@ func (s *FinalizeExecutionStep) Order() int {
 	return 100
 }
 
-func (s *FinalizeExecutionStep) Execute(_ context.Context, _ *pipeline.ExecutionContext) error {
-	// Future phases will extend this step to persist insights, PDFs,
-	// or specific metadata generated during execution.
+func (s *FinalizeExecutionStep) Execute(ctx context.Context, execution *pipeline.ExecutionContext) error {
+	// Let the Reliability layer own all failure, metrics and retry logic.
+	// It absorbs errors internally to prevent pipeline cleanup crashes.
+	s.reliabilityManager.Handle(ctx, execution)
 	return nil
 }

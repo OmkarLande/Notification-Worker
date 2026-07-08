@@ -19,6 +19,7 @@ import (
 	"github.com/OmkarLande/notification-worker/internal/providers"
 	"github.com/OmkarLande/notification-worker/internal/providers/expense"
 	"github.com/OmkarLande/notification-worker/internal/providers/stackday"
+	"github.com/OmkarLande/notification-worker/internal/reliability"
 	"github.com/OmkarLande/notification-worker/internal/repositories"
 	"github.com/OmkarLande/notification-worker/internal/services"
 	"github.com/OmkarLande/notification-worker/internal/services/deliverymanager"
@@ -111,25 +112,31 @@ func New(cfg *config.AppConfig) (*Application, error) {
 	payloadResolver := payloadresolver.New()
 	deliveryManager := deliverymanager.New(channelTaskRepo, channelRegistry, payloadResolver, log)
 
-	// 8. Execution Pipeline
+	// 8. Reliability Services
+	retryService := reliability.NewRetryService(taskRepo, channelTaskRepo, statusCache, log)
+	metricsService := reliability.NewMetricsService(log)
+	taskLogService := reliability.NewTaskLogService(taskLogRepo)
+	reliabilityManager := reliability.NewManager(retryService, metricsService, taskLogService, log)
+
+	// 9. Execution Pipeline
 	execPipeline := pipeline.NewPipeline(log)
 	execPipeline.AddStep(steps.NewValidateContextStep())
 	execPipeline.AddStep(steps.NewProviderExecutionStep())
 	execPipeline.AddStep(steps.NewInsightGenerationStep(insightService))
 	execPipeline.AddStep(steps.NewPayloadTransformationStep(templateService))
 	execPipeline.AddStep(steps.NewChannelDeliveryStep(deliveryManager))
-	execPipeline.AddStep(steps.NewFinalizeExecutionStep())
+	execPipeline.AddStep(steps.NewFinalizeExecutionStep(reliabilityManager))
 
 	log.Info("Execution pipeline initialized", "steps", len(execPipeline.Steps()))
 
-	// 9. Core Services.
+	// 10. Core Services.
 	jobService := services.NewJobService(jobRepo, appRepo, statusCache, log)
 	jobExecService := services.NewJobExecutionService(
 		jobService, taskRepo, jobChannelRepo, channelTaskRepo, factory, statusCache, log,
 	)
 
-	// 9. Workers.
-	taskWorker := workers.NewTaskWorker(taskRepo, taskLogRepo, factory, statusCache, execPipeline, log)
+	// 11. Workers.
+	taskWorker := workers.NewTaskWorker(taskRepo, factory, statusCache, execPipeline, log)
 	dispatcher := workers.NewTaskDispatcher(taskRepo, jobRepo, appRepo, taskWorker, statusCache, log)
 
 	// 10. Container.
